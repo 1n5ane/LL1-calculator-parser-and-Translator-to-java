@@ -1,0 +1,154 @@
+ /* Simple +/-/* expression language; parser evaluates constant expressions on the fly*/
+/**
+ *  Package and Import Specifications
+ */
+import java_cup.runtime.*;
+import java.util.*;
+
+/**
+ *  Usercode Components
+ */
+parser code {:
+    // Connect this parser to a scanner!
+    Scanner s;
+    Parser(Scanner s){ this.s=s; }
+    public static String BODY_MAIN_START="";
+    public static boolean END_OF_DECLARATIONS=false;
+:}
+
+/* define how to connect to the scanner! */
+scan with {: return s.next_token(); :};
+
+/**
+ *  Symbol Lists
+ */
+
+ /* Terminals (tokens returned by the scanner). */
+ terminal            PLUS, LPAREN, RPAREN, PREFIX, SUFFIX, IF, ELSE, BRACKET_CLOSE, COMMA, FUNC_DECLARATION;
+ terminal String     STRING_LITERAL, IDENTIFIER;
+
+ /*  Non terminals */
+ non terminal            Strt;
+ non terminal String    args_call2,args_call2_tail,cond2,expr2,declarations,declarations_end, args_decl, args_decl_tail, args_call, args_call_tail,expr, body_func, body_main , cond, call;      // used to store evaluated subexpressions
+
+ /**
+  *  Precedence Declarations
+  */
+
+ precedence left PLUS;
+ /*
+    sta call kai declarations ta identifiers kai string literal prepei na exoun
+    dexia proseteristikothta gia na mn ginetai reduce alla shift
+                                                                              */
+ precedence nonassoc IDENTIFIER,STRING_LITERAL,RPAREN;
+ precedence nonassoc IF;
+
+
+
+
+ /**
+  *  The Grammar Rules
+  */
+ Strt ::= declarations:d body_main:b {:
+      /* by program we mean declarations  */
+ 			System.out.println("\nimport java.lang.String;\n");
+ 			System.out.println("public class Main {");
+ 			System.out.println("\tpublic static void main(String[] args) {");
+      System.out.printf("%s",BODY_MAIN_START);
+      System.out.printf("%s\n",b);
+      System.out.println("\t}");
+      System.out.printf("%s",d);
+      System.out.println("}");
+
+ 			 :}
+
+       ;
+  /*
+    GIA NA APAGOREPSW THN EMFANISH IDENTIFIER STH MAIN (META APO OLA TA DECLARATIONS) APLA KANW TRUE
+    TO END_OF_DECLARATIONS FLAG KAI OPOU EMFANIZETAI IDENTIFIER ELEGXW TO FLAG KAI ANALOGA PETAW ERROR
+
+    THA MPOROUSA NA KANW DUPLICATE OLOUS TOU KANONES POU EMFANIZETAI IDENTIFIER
+              (cond_ident,cond_xwris, expr_ident,expr_xwris ...klp)
+    ALLA DEN PROTIMITHIKE GIA LOGOUS KATHAROTHTAS TOU KWDIKA
+
+     */
+  /* after declarations call and expr and whatever   */
+  /* different body in main different in declarations-> one expr without identifier and one with... */
+
+/* the first time an expr is found means there wil be no declaratio */
+
+ declarations ::= IDENTIFIER:f_name LPAREN args_decl:a body_func:b declarations:d
+                                    {: RESULT = String.format("\tpublic static String %s(%s){%s}\n%s",f_name,a,b,d); :}
+             |declarations_end                         {:RESULT = "";:}
+             ;
+  declarations_end ::= IDENTIFIER:f_id LPAREN args_call2:a   {:END_OF_DECLARATIONS=true;BODY_MAIN_START+=String.format("\t\tSystem.out.println(%s(%s));\n",f_id,a); :}
+                       |                               {:END_OF_DECLARATIONS=true;RESULT = ""; :}
+                       ;
+  args_call2      ::= expr2:e args_call2_tail:a RPAREN                   {: RESULT = String.format("%s%s",e,a); :}
+                 | RPAREN                                                {: RESULT = ""; :}
+                  ;
+  args_call2_tail ::= COMMA expr2:e args_call2_tail:a                    {:RESULT = String.format(",%s%s",e,a); :}
+                       |                                                       {:RESULT = "";:}
+                               ;
+  /* this is to solve the hidden reduce/reduce conflict because
+    both args_decl and args_call want IDENTIFIER so the parser may thinks he
+    is in declaration when in fact he is in call
+                     */
+
+ args_decl      ::= IDENTIFIER:id args_decl_tail:a FUNC_DECLARATION  {:RESULT = String.format("String %s%s",id,a); :}
+            | FUNC_DECLARATION                                       {:RESULT = ""; :}
+              ;
+ args_call      ::= expr:e args_call_tail:a RPAREN                   {: RESULT = String.format("%s%s",e,a); :}
+             | IDENTIFIER:id args_call_tail:a RPAREN                 {:if(END_OF_DECLARATIONS){throw new Exception(" IDENTIFIERS IN MAIN");} RESULT = String.format("%s%s",id,a); :}
+             | RPAREN                                                {: RESULT = ""; :}
+              ;
+
+ args_decl_tail ::= COMMA IDENTIFIER:id args_decl_tail:a             {:RESULT =String.format(",String %s%s",id,a); :}
+             |                                                       {:RESULT = ""; :}
+              ;
+ args_call_tail ::= COMMA expr:e args_call_tail:a                    {:RESULT = String.format(",%s%s",e,a); :}
+             | COMMA IDENTIFIER:id args_call_tail:a                  {:if(END_OF_DECLARATIONS){throw new Exception(" IDENTIFIERS IN MAIN");}RESULT = String.format(",%s%s",id,a); :}
+             |                                                       {:RESULT = "";:}
+              ;
+
+ body_main      ::= expr:e body_main:b         {:RESULT = String.format("\t\tSystem.out.println(%s);\n%s",e,b); :}
+               /*| expr:e                      {:RESULT = String.format("\t\t%s;\n",e); :} */
+             |                                 {: RESULT = ""; :}
+              ;
+/* body_func CAN HAVE IDENTIFIER AS RETURN VALUE AND EVERYTHING BODY MAIN CAN HAVE */
+ body_func      ::= expr:e BRACKET_CLOSE       {: RESULT = String.format("return %s;",e); :}
+             | IDENTIFIER:id BRACKET_CLOSE     {:RESULT = String.format("return %s;",id);:}
+
+              ;
+ expr      ::= call:c                                                     {:RESULT = String.format("%s",c); :}
+             | expr:e1 PLUS expr:e2                                       {:RESULT = String.format("%s+%s",e1,e2);:}
+             | IDENTIFIER:id PLUS expr:e                                  {:if(END_OF_DECLARATIONS){throw new Exception(" IDENTIFIERS IN MAIN");}RESULT = String.format("%s+%s",id,e); :}
+             | expr:e PLUS IDENTIFIER:id                                  {:if(END_OF_DECLARATIONS){throw new Exception(" IDENTIFIERS IN MAIN");}RESULT = String.format("%s+%s",e,id); :}
+             | IDENTIFIER:id1 PLUS IDENTIFIER:id2                         {:if(END_OF_DECLARATIONS){throw new Exception(" IDENTIFIERS IN MAIN");}RESULT = String.format("%s+%s",id1,id2); :}
+             | IF LPAREN cond:c RPAREN expr:e1 ELSE expr:e2               {:RESULT = String.format("((%s)?(%s):(%s))",c,e1,e2); :}
+             | IF LPAREN cond:c RPAREN IDENTIFIER:id ELSE expr:e          {:if(END_OF_DECLARATIONS){throw new Exception(" IDENTIFIERS IN MAIN");}RESULT = String.format("((%s)?%s:(%s))",c,id,e); :}
+             | IF LPAREN cond:c RPAREN expr:e ELSE IDENTIFIER:id          {:if(END_OF_DECLARATIONS){throw new Exception(" IDENTIFIERS IN MAIN");}RESULT = String.format("((%s)?(%s):%s)",c,e,id); :}
+             | IF LPAREN cond:c RPAREN IDENTIFIER:id1 ELSE IDENTIFIER:id2 {:if(END_OF_DECLARATIONS){throw new Exception(" IDENTIFIERS IN MAIN");}RESULT = String.format("((%s)?%s:%s)",c,id1,id2); :}
+             | STRING_LITERAL:s                                           {:RESULT = String.format("\"%s\"",s);:}
+              ;
+        /* expr2 is used for the first call because the flag wont work on first call   */
+  expr2      ::= call:c                                                     {:RESULT = String.format("%s",c); :}
+             | expr2:e1 PLUS expr2:e2                                       {:RESULT = String.format("%s+%s",e1,e2);:}
+             | IF LPAREN cond2:c RPAREN expr2:e1 ELSE expr2:e2               {:RESULT = String.format("((%s)?(%s):(%s))",c,e1,e2); :}
+             | STRING_LITERAL:s                                           {:RESULT = String.format("\"%s\"",s);:}
+             ;
+        /* cond2 is used by expr2             */
+  cond2      ::= expr2:e1 SUFFIX expr2:e2               {: RESULT = String.format("(%s).endsWith(%s)",e2,e1); :}
+             | expr2:e1 PREFIX expr2:e2               {: RESULT = String.format("(%s).startsWith(%s)",e2,e1); :}
+              ;
+ cond      ::= expr:e1 SUFFIX expr:e2               {: RESULT = String.format("(%s).endsWith(%s)",e2,e1); :}
+             | expr:e1 PREFIX expr:e2               {: RESULT = String.format("(%s).startsWith(%s)",e2,e1); :}
+             | IDENTIFIER:id1 SUFFIX IDENTIFIER:id2 {:if(END_OF_DECLARATIONS){throw new Exception(" IDENTIFIERS IN MAIN");}RESULT = String.format("%s.endsWith(%s)",id2,id1);:}
+             | IDENTIFIER:id SUFFIX expr:e          {:if(END_OF_DECLARATIONS){throw new Exception(" IDENTIFIERS IN MAIN");}RESULT = String.format("%s.endsWith(%s)",e,id);:}
+             | expr:e SUFFIX IDENTIFIER:id          {:if(END_OF_DECLARATIONS){throw new Exception(" IDENTIFIERS IN MAIN");}RESULT = String.format("%s.endsWith(%s)",id,e);:}
+             | IDENTIFIER:id1 PREFIX IDENTIFIER:id2 {:if(END_OF_DECLARATIONS){throw new Exception(" IDENTIFIERS IN MAIN");}RESULT = String.format("%s.startsWith(%s)",id2,id1);:}
+             | IDENTIFIER:id PREFIX expr:e          {:if(END_OF_DECLARATIONS){throw new Exception(" IDENTIFIERS IN MAIN");}RESULT = String.format("%s.startsWith(%s)",e,id);:}
+             | expr:e PREFIX IDENTIFIER:id          {:if(END_OF_DECLARATIONS){throw new Exception(" IDENTIFIERS IN MAIN");}RESULT = String.format("%s.startsWith(%s)",id,e);:}
+              ;
+ call      ::= IDENTIFIER:f_id LPAREN args_call:a   {:RESULT = String.format("%s(%s)",f_id,a);:}
+              ;
